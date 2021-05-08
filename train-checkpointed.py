@@ -19,6 +19,7 @@ def parse_args():
     add_arg('--model', "-m" , type=str, default="inception_resnet_v2")
     add_arg('--num_tune_layers', "-nl", type=int, default=80)
     add_arg('--num_epochs', '-ne',type=int,default=25)
+    add_arg('--start_epoch', '-se', type=int)
     args = parser.parse_args()
     return args
 def main():
@@ -92,13 +93,18 @@ def main():
                 {"params": list(model.parameters())[-1 * args.num_tune_layers:-6], "lr": 1e-4},
                 {"params": model.head.parameters(), "lr": 1e-3}
             ], weight_decay=1e-5)
+
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim,num_epochs )
     criterion = nn.CrossEntropyLoss()
+    
+    checkpoint = torch.load(args.output_dir + "/epoch{}".format(args.start_epoch - 1))
+    model.load_state_dict(checkpoint['net'])
+    
     model = model.to(device)
-    for i in range(num_epochs):
+    for i in range(args.start_epoch, num_epochs):
         train_total, train_correct = 0,0
         model.train()
-        print("training epoch {}".format(i+ 1))
+        print("training epoch {}".format(i))
         for idx, (inputs, targets) in enumerate(train_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             optim.zero_grad()
