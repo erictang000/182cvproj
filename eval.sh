@@ -12,4 +12,4 @@
 module load pytorch/1.7.1-gpu
 
 # Run the training
-srun -l -u python eval.py --checkpoint="inceptionresnetv2_biggerFCN_linear_epoch5.pt"
+srun -l -u python eval.py --model="vit_base_patch16_224" --checkpoint="vit/epoch5"
