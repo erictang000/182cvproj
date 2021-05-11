@@ -11,7 +11,16 @@ from tqdm.auto import tqdm
 import copy
 import timm
 import argparse
+from utils import ValidationSet
+from timm.data.auto_augment import rand_augment_transform, augment_and_mix_transform, auto_augment_transform
+from mylayers import JankAttention
 
+
+model_to_arch = {
+    "vit" : "vit_base_patch16_224",
+    "inception_resnet_v2": "inception_resnet_v2",
+    "pit" : "pit_b_distilled_224"
+}
 def parse_args():
     parser = argparse.ArgumentParser()
     add_arg = parser.add_argument
@@ -19,6 +28,11 @@ def parse_args():
     add_arg('--model', "-m" , type=str, default="inception_resnet_v2")
     add_arg('--num_tune_layers', "-nl", type=int, default=80)
     add_arg('--num_epochs', '-ne',type=int,default=25)
+    add_arg('--checkpoint', '-c',type=int,default=0)
+    add_arg('--start-epoch', '-se',type=int,default=0)
+    add_arg('--augmix', '-am', type=int, default=0)
+    add_arg('--sparse_attn_k', '-sa', type=int, default=0)
+    add_arg('--residual_attn', '-ra', type=int, default=0)
     args = parser.parse_args()
     return args
 def main():
@@ -33,15 +47,22 @@ def main():
     batch_size = 32
     im_height = 64
     im_width = 64
-
-
-    data_transforms = transforms.Compose([
-        transforms.Resize((224,224)),
-        transforms.RandomCrop(224, padding=8),
-        transforms.RandomHorizontalFlip(),
+    
+    if args.model == "cait_m48_448":
+        im_height = 448
+        im_width = 448
+    else:
+        im_height=224
+        im_width=224
+    
+    basic_transforms = [transforms.Resize((im_height,im_width)), transforms.RandomCrop(im_height, padding=8)]
+    augmix = []
+    if args.augmix:
+        augmix = [augment_and_mix_transform("augmix-m3-w3", {})]
+    other_transforms = [transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
+    data_transforms = transforms.Compose(basic_transforms + augmix + other_transforms)
 
     transform_test = transforms.Compose([
         transforms.Resize((224,224)),
@@ -56,8 +77,13 @@ def main():
     device = "cuda:0"
     num_epochs = args.num_epochs
 
-
-    model = timm.create_model(args.model, pretrained=True)
+    
+    if args.model in model_to_arch:
+        model = timm.create_model(model_to_arch[args.model], pretrained=True)
+    else:
+        print("model does not exist")
+    
+    
     # Create a simple model
     for param in list(model.parameters())[:args.num_tune_layers]:
         param.requires_grad = False
@@ -77,8 +103,39 @@ def main():
                 {"params": list(model.parameters())[-1 * args.num_tune_layers:-6], "lr": 1e-4},
                 {"params": model.classif.parameters(), "lr": 1e-3}
             ], weight_decay=1e-5)
-    else:
+    elif args.model == "pit":
         num_ftrs = model.head.in_features
+        if args.sparse_attn_k:
+            for transformer in model.transformers:
+                for block in transformer.blocks:
+                    block.attn = JankAttention(block.attn, args.sparse_attn_k)
+#         if args.residual_attn:
+#             for transformer in mode
+        model.head =  nn.Sequential(
+                      nn.Dropout(0.4),
+                      nn.Linear(num_ftrs, 1024), 
+                      nn.ReLU(),
+                      nn.Linear(1024, 256),
+                      nn.ReLU(),
+                      nn.Linear(256, 200))
+        model.head_dist = nn.Sequential(
+                      nn.Dropout(0.4),
+                      nn.Linear(num_ftrs, 1024), 
+                      nn.ReLU(),
+                      nn.Linear(1024, 256),
+                      nn.ReLU(),
+                      nn.Linear(256, 200))
+        optim = torch.optim.Adam(
+            [
+                {"params": list(model.parameters())[-1 * args.num_tune_layers:-15], "lr": 1e-4},
+                {"params": model.head.parameters(), "lr": 1e-3},
+                {"params":model.head_dist.parameters(), "lr": 1e-3}
+            ], weight_decay=1e-5)
+    elif args.model == "vit":
+        num_ftrs = model.head.in_features
+        if args.sparse_attn_k:
+            for block in model.blocks:
+                block.attn = JankAttention(block.attn, args.sparse_attn_k)
         model.head =  nn.Sequential(
                       nn.Dropout(0.4),
                       nn.Linear(num_ftrs, 1024), 
@@ -89,13 +146,17 @@ def main():
 
         optim = torch.optim.Adam(
             [
-                {"params": list(model.parameters())[-1 * args.num_tune_layers:-6], "lr": 1e-4},
+                {"params": list(model.parameters())[-1 * args.num_tune_layers:-8], "lr": 1e-4},
                 {"params": model.head.parameters(), "lr": 1e-3}
             ], weight_decay=1e-5)
+    if args.checkpoint:
+        checkpoint = torch.load(args.output_dir + "/epoch{}".format(args.start_epoch - 1))
+        model.load_state_dict(checkpoint['net'])
+    print("num params: {}".format(len(list(model.parameters()))))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim,num_epochs )
     criterion = nn.CrossEntropyLoss()
     model = model.to(device)
-    for i in range(num_epochs):
+    for i in range(args.start_epoch, num_epochs):
         train_total, train_correct = 0,0
         model.train()
         print("training epoch {}".format(i+ 1))
@@ -103,6 +164,10 @@ def main():
             inputs, targets = inputs.to(device), targets.to(device)
             optim.zero_grad()
             outputs = model(inputs)
+            if (len(outputs)) == 2:
+                loss = criterion(outputs[1], targets)
+                loss.backward(retain_graph=True)
+                outputs = outputs[0]
             loss = criterion(outputs, targets)
             loss.backward()
             optim.step()
@@ -117,7 +182,7 @@ def main():
             'net': model.state_dict(),
         }, args.output_dir + "/epoch{}".format(i))
         
-        validation_set = torchvision.datasets.ImageFolder(data_dir / 'val', transform_test)
+        validation_set = ValidationSet(data_dir / 'val', transform_test)
         val_loader = torch.utils.data.DataLoader(validation_set, batch_size=batch_size,
                                                    shuffle=True, num_workers=4, pin_memory=True)
 
@@ -127,7 +192,7 @@ def main():
         all_losses = []
         with torch.no_grad():
             index = 0
-            print("evaluating validation set after epoch: {}".format(i))
+            print("\r evaluating validation set after epoch: {}".format(i))
             for batch in val_loader:
                 inputs = batch[0]
                 targets = batch[1]
