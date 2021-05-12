@@ -4,7 +4,7 @@ import torch
 def max_neg_value(tensor):
     return -torch.finfo(tensor.dtype).max
 
-class JankAttention(nn.Module):
+class SparseAttention(nn.Module):
     def __init__(self, attn, k=0):
         super().__init__()
         self.k = k
@@ -36,3 +36,20 @@ class JankAttention(nn.Module):
         x = self.proj_drop(x)
         return x
 
+class Residual(nn.Module):
+    def forward(self, x, residual):
+        return x + residual
+    
+class GRUGating(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.gru = nn.GRUCell(dim, dim)
+
+    def forward(self, x, residual):
+        gated_output = self.gru(
+            rearrange(x, 'b n d -> (b n) d'),
+            rearrange(residual, 'b n d -> (b n) d')
+        )
+
+        return gated_output.reshape_as(x)
+    

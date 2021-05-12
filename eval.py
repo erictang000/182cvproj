@@ -18,12 +18,14 @@ import pandas as pd
 import torchattacks
 import foolbox as fb
 from utils import ValidationSet, update_bn_params
-from mylayers import JankAttention
+from mylayers import SparseAttention
+from OurModels import DoubleViT
 
 model_to_arch = {
-    "vit" : "vit_base_patch16_224",
+    "vit" : "vit_large_patch16_224_in21k",
     "inception_resnet_v2": "inception_resnet_v2",
-    "pit" : "pit_b_distilled_224"
+    "pit" : "pit_b_distilled_224",
+    "doublevit": "asdf"
 }
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -48,12 +50,9 @@ def main():
     im_height = 64
     im_width = 64
     
-    if args.model == "cait_m48_448":
-        im_height = 448
-        im_width = 448
-    else:
-        im_height=224
-        im_width=224
+
+    im_height=224
+    im_width=224
 
 
     transform_test = transforms.Compose([
@@ -66,10 +65,13 @@ def main():
     device = "cuda:0"
 
     if args.model in model_to_arch:
-        model = timm.create_model(model_to_arch[args.model], pretrained=True)
+         if args.model == "doublevit":
+            model = DoubleViT(224)
+        else:
+            model = timm.create_model(model_to_arch[args.model], pretrained=True)    
     else:
         print("model does not exist")
-   
+    
     if args.model == "inception_resnet_v2":
         num_ftrs = model.classif.in_features
         model.classif = nn.Sequential(
@@ -84,7 +86,7 @@ def main():
         if args.sparse_attn_k:
             for transformer in model.transformers:
                 for block in transformer.blocks:
-                    block.attn = JankAttention(block.attn, args.sparse_attn_k)
+                    block.attn = SparseAttention(block.attn, args.sparse_attn_k)
         model.head =  nn.Sequential(
                       nn.Dropout(0.4),
                       nn.Linear(num_ftrs, 1024), 
@@ -101,6 +103,9 @@ def main():
                       nn.Linear(256, 200))
     elif args.model == "vit":
         num_ftrs = model.head.in_features
+        if args.sparse_attn_k:
+            for block in model.blocks:
+                block.attn = SparseAttention(block.attn, args.sparse_attn_k)
         model.head =  nn.Sequential(
                       nn.Dropout(0.4),
                       nn.Linear(num_ftrs, 1024), 
@@ -123,8 +128,8 @@ def main():
     model.eval()
     if args.check_robustness:
         fmodel = fb.PyTorchModel(model, bounds=(0,1))
-        attack = fb.attacks.LinfPGD(steps=1)
-        epsilons = [1.0]
+        attack = fb.attacks.LinfPGD(steps=10)
+        epsilons = [0.1]
         robust_accuracies = []
 
     all_preds = []

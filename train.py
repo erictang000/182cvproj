@@ -13,13 +13,14 @@ import timm
 import argparse
 from utils import ValidationSet
 from timm.data.auto_augment import rand_augment_transform, augment_and_mix_transform, auto_augment_transform
-from mylayers import JankAttention
-
+from mylayers import SparseAttention
+from OurModels import DoubleViT
 
 model_to_arch = {
-    "vit" : "vit_base_patch16_224",
+    "vit" : "vit_large_patch16_224_in21k",
     "inception_resnet_v2": "inception_resnet_v2",
-    "pit" : "pit_b_distilled_224"
+    "pit" : "pit_b_distilled_224",
+    "doublevit": "asdf"
 }
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -35,6 +36,8 @@ def parse_args():
     add_arg('--residual_attn', '-ra', type=int, default=0)
     args = parser.parse_args()
     return args
+
+
 def main():
     args = parse_args()
     # Create a pytorch dataset
@@ -45,15 +48,8 @@ def main():
 
     # Create the training data generator
     batch_size = 32
-    im_height = 64
-    im_width = 64
-    
-    if args.model == "cait_m48_448":
-        im_height = 448
-        im_width = 448
-    else:
-        im_height=224
-        im_width=224
+    im_height=224
+    im_width=224
     
     basic_transforms = [transforms.Resize((im_height,im_width)), transforms.RandomCrop(im_height, padding=8)]
     augmix = []
@@ -72,14 +68,17 @@ def main():
     train_set = torchvision.datasets.ImageFolder(data_dir / 'train', data_transforms)
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size,
                                                shuffle=True, num_workers=4, pin_memory=True)
-    #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+#     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     torch.cuda.device("cuda:0")
     device = "cuda:0"
     num_epochs = args.num_epochs
 
     
     if args.model in model_to_arch:
-        model = timm.create_model(model_to_arch[args.model], pretrained=True)
+        if args.model == "doublevit":
+            model = DoubleViT(224)
+        else:
+            model = timm.create_model(model_to_arch[args.model], pretrained=True)
     else:
         print("model does not exist")
     
@@ -87,9 +86,18 @@ def main():
     # Create a simple model
     for param in list(model.parameters())[:args.num_tune_layers]:
         param.requires_grad = False
-        
+    
     # Parameters of newly constructed modules have requires_grad=True by default
-    if args.model == "inception_resnet_v2":
+    if args.model == "doublevit":
+        optim = torch.optim.Adam(
+            [
+                {"params": list(model.model_l.parameters())[-2 * args.num_tune_layers: -1 * args.num_tune_layers], "lr":1e-6},
+                {"params": list(model.model_s.parameters())[int(-1.3 * args.num_tune_layers): -1 * args.num_tune_layers], "lr":1e-6},
+                {"params": list(model.model_l.parameters())[-1 * args.num_tune_layers:], "lr": 1e-5},
+                {"params": list(model.model_s.parameters())[-1 * args.num_tune_layers:], "lr": 1e-5},
+                {"params": model.head.parameters(), "lr": 1e-4}
+            ], weight_decay=1e-5)
+    elif args.model == "inception_resnet_v2":
         num_ftrs = model.classif.in_features
         model.classif = nn.Sequential(
                       nn.Dropout(0.4),
@@ -109,8 +117,6 @@ def main():
             for transformer in model.transformers:
                 for block in transformer.blocks:
                     block.attn = JankAttention(block.attn, args.sparse_attn_k)
-#         if args.residual_attn:
-#             for transformer in mode
         model.head =  nn.Sequential(
                       nn.Dropout(0.4),
                       nn.Linear(num_ftrs, 1024), 

@@ -53,3 +53,27 @@ def update_bn_params(model, val_loader, num_bn_updates, gpu):
                 output = model(images)
     print("Done.")
     return model
+
+
+
+# from pytorch_grad_cam import GradCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM
+# from pytorch_grad_cam.utils.image import show_cam_on_image
+# def gradcam(model, target_layer, input_tensors):
+
+#     # Construct the CAM object once, and then re-use it on many images:
+#     cam = GradCAM(model=model, target_layer=target_layer, use_cuda=args.use_cuda)
+
+#     # If target_category is None, the highest scoring category
+#     # will be used for every image in the batch.
+#     # target_category can also be an integer, or a list of different integers
+#     # for every image in the batch.
+#     target_category = None
+
+#     # You can also pass aug_smooth=True and eigen_smooth=True, to apply smoothing.
+#     activation_maps = []
+#     for input_tensor in input_tensors:
+#         grayscale_cam = cam(input_tensor=input_tensor, target_category=target_category)
+
+#         # In this example grayscale_cam has only one image in the batch:
+#         grayscale_cam = grayscale_cam[0, :]
+#     return activation_maps
