@@ -17,9 +17,9 @@ from PIL import Image
 import pandas as pd
 import torchattacks
 import foolbox as fb
-from utils import ValidationSet, update_bn_params
-from mylayers import SparseAttention
-from OurModels import DoubleViT
+from utils.utils import ValidationSet, update_bn_params
+from models.other_layers import SparseAttention
+from models.DoubleViT import DoubleViT
 
 model_to_arch = {
     "vit" : "vit_large_patch16_224_in21k",

@@ -3,7 +3,6 @@ import numpy as np
 import torch
 import torchvision
 import torchvision.transforms as transforms
-# from model import Net
 import matplotlib.pyplot as plt
 
 from torch import nn
@@ -11,10 +10,10 @@ from tqdm.auto import tqdm
 import copy
 import timm
 import argparse
-from utils import ValidationSet
+from utils.utils import ValidationSet
 from timm.data.auto_augment import rand_augment_transform, augment_and_mix_transform, auto_augment_transform
-from mylayers import SparseAttention
-from OurModels import DoubleViT
+from models.other_layers import SparseAttention
+from models.DoubleViT import DoubleViT
 
 model_to_arch = {
     "vit" : "vit_large_patch16_224_in21k",
@@ -116,7 +115,7 @@ def main():
         if args.sparse_attn_k:
             for transformer in model.transformers:
                 for block in transformer.blocks:
-                    block.attn = JankAttention(block.attn, args.sparse_attn_k)
+                    block.attn = SparseAttention(block.attn, args.sparse_attn_k)
         model.head =  nn.Sequential(
                       nn.Dropout(0.4),
                       nn.Linear(num_ftrs, 1024), 
@@ -141,7 +140,7 @@ def main():
         num_ftrs = model.head.in_features
         if args.sparse_attn_k:
             for block in model.blocks:
-                block.attn = JankAttention(block.attn, args.sparse_attn_k)
+                block.attn = SparseAttention(block.attn, args.sparse_attn_k)
         model.head =  nn.Sequential(
                       nn.Dropout(0.4),
                       nn.Linear(num_ftrs, 1024), 
